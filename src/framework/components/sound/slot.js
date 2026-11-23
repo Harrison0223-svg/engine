@@ -139,6 +139,14 @@ class SoundSlot extends EventHandler {
     instances = [];
 
     /**
+     * Instances waiting for the asset that was assigned when they were created.
+     *
+     * @type {Map<number, SoundInstance[]>|null}
+     * @private
+     */
+    _pendingInstances = null;
+
+    /**
      * Create a new SoundSlot.
      *
      * @param {SoundComponent} component - The Component that created this slot.
@@ -193,7 +201,8 @@ class SoundSlot extends EventHandler {
     /**
      * Plays a sound. If {@link overlap} is true the new sound instance will be played
      * independently of any other instances already playing. Otherwise existing sound instances
-     * will stop before playing the new sound.
+     * will stop before playing the new sound. The instance plays the asset assigned to the slot
+     * when this method is called, even if that asset has to load first.
      *
      * @returns {SoundInstance} The new sound instance.
      */
@@ -215,16 +224,14 @@ class SoundSlot extends EventHandler {
         // if not loaded then load first
         // and then set sound resource on the created instance
         if (!this.isLoaded) {
-            const onLoad = function (sound) {
-                const playWhenLoaded = instance._playWhenLoaded;
-                instance.sound = sound;
-                if (playWhenLoaded) {
-                    instance.play();
-                }
-            };
-
-            this.off('load', onLoad);
-            this.once('load', onLoad);
+            const assetId = Number(this._asset);
+            this._pendingInstances ??= new Map();
+            let pending = this._pendingInstances.get(assetId);
+            if (!pending) {
+                pending = [];
+                this._pendingInstances.set(assetId, pending);
+            }
+            pending.push(instance);
             this.load();
         } else {
             instance.play();
@@ -277,6 +284,16 @@ class SoundSlot extends EventHandler {
     stop() {
         let stopped = false;
 
+        if (this._pendingInstances) {
+            for (const assetId of this._pendingInstances.keys()) {
+                if (!this._isCurrentAsset(assetId)) {
+                    this._assets.off(`add:${assetId}`, this._onAssetAdd, this);
+                    this._assets.get(assetId)?.off('load', this._onAssetLoad, this);
+                }
+            }
+            this._pendingInstances.clear();
+        }
+
         const instances = this.instances;
         let i = instances.length;
         // do this in reverse order because as each instance
@@ -300,15 +317,28 @@ class SoundSlot extends EventHandler {
             return;
         }
 
-        const asset = this._assets.get(this._asset);
+        const assetId = Number(this._asset);
+        const asset = this._assets.get(assetId);
         if (!asset) {
-            this._assets.off(`add:${this._asset}`, this._onAssetAdd, this);
-            this._assets.once(`add:${this._asset}`, this._onAssetAdd, this);
+            this._assets.off(`add:${assetId}`, this._onAssetAdd, this);
+            this._assets.once(`add:${assetId}`, this._onAssetAdd, this);
             return;
         }
 
-        asset.off('remove', this._onAssetRemoved, this);
-        asset.on('remove', this._onAssetRemoved, this);
+        this._loadAsset(asset);
+    }
+
+    /**
+     * Loads a registered asset selected by the slot or still needed by a pending instance.
+     *
+     * @param {Asset} asset - The asset to load.
+     * @private
+     */
+    _loadAsset(asset) {
+        if (this._isCurrentAsset(asset.id)) {
+            asset.off('remove', this._onAssetRemoved, this);
+            asset.on('remove', this._onAssetRemoved, this);
+        }
 
         if (!asset.resource) {
             asset.off('load', this._onAssetLoad, this);
@@ -319,7 +349,7 @@ class SoundSlot extends EventHandler {
             return;
         }
 
-        this.fire('load', asset.resource);
+        this._onAssetLoad(asset);
     }
 
     /**
@@ -400,6 +430,11 @@ class SoundSlot extends EventHandler {
     _hasAsset() {
         // != intentional
         return this._asset != null;
+    }
+
+    _isCurrentAsset(assetId) {
+        // AssetRegistry#get accepts numeric asset IDs stored as strings.
+        return this._hasAsset() && assetId === Number(this._asset);
     }
 
     /**
@@ -510,11 +545,27 @@ class SoundSlot extends EventHandler {
     }
 
     _onAssetAdd(asset) {
-        this.load();
+        this._loadAsset(asset);
     }
 
     _onAssetLoad(asset) {
-        this.load();
+        const sound = asset.resource;
+        const pending = this._pendingInstances?.get(asset.id);
+        this._pendingInstances?.delete(asset.id);
+
+        if (this._isCurrentAsset(asset.id)) {
+            this.fire('load', sound);
+        }
+
+        if (pending) {
+            for (const instance of pending) {
+                const playWhenLoaded = instance._playWhenLoaded;
+                instance.sound = sound;
+                if (playWhenLoaded) {
+                    instance.play();
+                }
+            }
+        }
     }
 
     _onAssetRemoved(asset) {
@@ -538,9 +589,13 @@ class SoundSlot extends EventHandler {
     set asset(value) {
         const old = this._asset;
 
-        if (old) {
-            this._assets.off(`add:${old}`, this._onAssetAdd, this);
-            const oldAsset = this._assets.get(old);
+        if (old != null) {
+            const oldId = Number(old);
+            // An old asset can still be added later for an instance waiting on it.
+            if (!this._pendingInstances?.has(oldId)) {
+                this._assets.off(`add:${oldId}`, this._onAssetAdd, this);
+            }
+            const oldAsset = this._assets.get(oldId);
             if (oldAsset) {
                 oldAsset.off('remove', this._onAssetRemoved, this);
             }
