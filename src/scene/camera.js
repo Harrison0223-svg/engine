@@ -33,7 +33,6 @@ import { ClipPlanes, MAX_CLIP_PLANES } from './clip-planes.js';
 // pre-allocated temp variables
 const _deviceCoord = new Vec3();
 const _halfSize = new Vec3();
-const _point = new Vec3();
 const _invViewProjMat = new Mat4();
 const _xrViewProjMat = new Mat4();
 const _xrViewFrustum = new Frustum();
@@ -763,8 +762,10 @@ class Camera {
 
     get viewMatrix() {
         if (this._viewMatDirty) {
-            const wtm = this._node.getWorldTransform();
-            this._viewMat.copy(wtm).invert();
+            // Match the renderer's view, which uses the node's position and rotation without scale.
+            const position = this._node.getPosition();
+            const rotation = this._node.getRotation();
+            this._viewMat.setTRS(position, rotation, Vec3.ONE).invert();
             this._viewMatDirty = false;
         }
         return this._viewMat;
@@ -1135,14 +1136,12 @@ class Camera {
             _halfSize.x *= _deviceCoord.x + offset.x;
             _halfSize.y *= _deviceCoord.y + offset.y;
 
-            // transform to world space
-            const invView = this._node.getWorldTransform();
+            // Rotate the ray without applying node scale, as in the rendered view.
             _halfSize.z = -this.nearClip;
-            invView.transformPoint(_halfSize, _point);
-
-            // point along camera->_point ray at distance z from the camera
             const cameraPos = this._node.getPosition();
-            worldCoord.sub2(_point, cameraPos);
+            this._node.getRotation().transformVector(_halfSize, worldCoord);
+
+            // Point along the ray at distance z from the camera.
             worldCoord.normalize();
             worldCoord.mulScalar(z);
             worldCoord.add(cameraPos);

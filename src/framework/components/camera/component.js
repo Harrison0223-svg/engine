@@ -1263,7 +1263,8 @@ class CameraComponent extends Component {
     }
 
     /**
-     * Gets the camera's view matrix.
+     * Gets the camera's view matrix. It uses the camera entity's world position and rotation
+     * without scale.
      *
      * @type {Mat4}
      */

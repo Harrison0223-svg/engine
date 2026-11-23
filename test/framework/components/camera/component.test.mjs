@@ -1,7 +1,9 @@
 import { expect } from 'chai';
 
 import { Color } from '../../../../src/core/math/color.js';
+import { Mat4 } from '../../../../src/core/math/mat4.js';
 import { Vec2 } from '../../../../src/core/math/vec2.js';
+import { Vec3 } from '../../../../src/core/math/vec3.js';
 import { Vec4 } from '../../../../src/core/math/vec4.js';
 import { Entity } from '../../../../src/framework/entity.js';
 import {
@@ -30,6 +32,80 @@ describe('CameraComponent', function () {
         app?.destroy();
         app = null;
         jsdomTeardown();
+    });
+
+    describe('screen conversions with non-uniform scale', function () {
+        const width = 800;
+        const height = 400;
+
+        function projectRenderedPoint(camera, point) {
+            // Use the renderer's view-projection matrix as the oracle: a round trip through
+            // worldToScreen and screenToWorld can pass when both use the same wrong transform.
+            const matrix = new Mat4().set(app.graphicsDevice.scope.resolve('matrix_viewProjection').value);
+            const clip = matrix.transformVec4(new Vec4(point.x, point.y, point.z, 1));
+            const { x, y, z, w } = camera.rect;
+            return new Vec2(
+                ((clip.x / clip.w + 1) * 0.5 * z + x) * width,
+                ((1 - clip.y / clip.w) * 0.5 * w + 1 - y - w) * height
+            );
+        }
+
+        [PROJECTION_PERSPECTIVE, PROJECTION_ORTHOGRAPHIC].forEach((projection) => {
+            [false, true].forEach((scaleAncestor) => {
+                const mode = projection === PROJECTION_PERSPECTIVE ? 'perspective' : 'orthographic';
+                const scaled = scaleAncestor ? 'an ancestor' : 'the camera entity';
+
+                describe(`${mode} camera with scale on ${scaled}`, function () {
+                    let entity;
+
+                    beforeEach(function () {
+                        const ancestor = new Entity('ancestor');
+                        ancestor.setLocalPosition(2, -3, 4);
+                        ancestor.setLocalEulerAngles(-5, 20, 10);
+                        app.root.addChild(ancestor);
+
+                        entity = new Entity('camera');
+                        entity.setLocalPosition(1, 2, 3);
+                        entity.setLocalEulerAngles(15, -10, 25);
+                        ancestor.addChild(entity);
+                        (scaleAncestor ? ancestor : entity).setLocalScale(1, 0.8, 0.5);
+                        entity.addComponent('camera', {
+                            projection,
+                            aspectRatioMode: ASPECT_MANUAL,
+                            aspectRatio: 3,
+                            nearClip: 0.5,
+                            farClip: 30,
+                            projectionOffset: [0.2, -0.15],
+                            rect: new Vec4(0.125, 0.25, 0.75, 0.5)
+                        });
+
+                        app.renderer.setCameraUniforms(entity.camera.camera, null);
+                    });
+
+                    it('unprojects an off-center pixel onto the rendered ray', function () {
+                        const camera = entity.camera;
+                        const point = camera.screenToWorld(560, 135, 8, undefined, width, height);
+                        const rendered = projectRenderedPoint(camera, point);
+
+                        expect(rendered.x).to.be.closeTo(560, 1e-4);
+                        expect(rendered.y).to.be.closeTo(135, 1e-4);
+                        if (projection === PROJECTION_PERSPECTIVE) {
+                            expect(point.distance(entity.getPosition())).to.be.closeTo(8, 1e-6);
+                        }
+                    });
+
+                    it('projects a world point onto the rendered pixel', function () {
+                        const camera = entity.camera;
+                        const point = entity.getRotation().transformVector(new Vec3(1, 2, -8)).add(entity.getPosition());
+                        const rendered = projectRenderedPoint(camera, point);
+                        const screen = camera.worldToScreen(point, undefined, width, height);
+
+                        expect(screen.x).to.be.closeTo(rendered.x, 1e-4);
+                        expect(screen.y).to.be.closeTo(rendered.y, 1e-4);
+                    });
+                });
+            });
+        });
     });
 
     describe('#addComponent', function () {
