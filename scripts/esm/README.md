@@ -22,6 +22,7 @@ Script attributes (documented on each class) can be passed via `properties` as a
 
 - **Camera and character controllers** — orbit/fly/pan camera controls, first and third person controllers.
 - **Rendering helpers** — post-processing via camera frame, planar reflections, shadow catcher, reference grid, procedural sky.
+- **Pixel art** — [PixelScreen](camera/pixel-screen.mjs) presents a low-resolution camera at an integer scale while keeping the UI sharp.
 - **Gaussian splatting** — streamed splat loading with LOD presets, reveal animations, shader effects, weather, text and image splats.
 - **XR** — session lifecycle, controllers, teleport navigation, object manipulation and 3D menus.
 - **Annotations** — 3D hotspots with DOM labels.
